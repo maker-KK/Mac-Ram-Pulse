@@ -1,6 +1,24 @@
 # Mac Ram Pulse
 
+[![Release](https://img.shields.io/github/v/release/maker-KK/Mac-Ram-Pulse)](https://github.com/maker-KK/Mac-Ram-Pulse/releases/latest)
+[![Homebrew](https://img.shields.io/badge/homebrew-maker--KK%2Ftap-FBB040?logo=homebrew&logoColor=white)](https://github.com/maker-KK/homebrew-tap)
+[![brew test-bot](https://github.com/maker-KK/homebrew-tap/actions/workflows/tests.yml/badge.svg)](https://github.com/maker-KK/homebrew-tap/actions/workflows/tests.yml)
+![macOS 13+ | Apple Silicon](https://img.shields.io/badge/macOS-13%2B%20%7C%20Apple%20Silicon-000000?logo=apple&logoColor=white)
+![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)
+[![License: MIT](https://img.shields.io/github/license/maker-KK/Mac-Ram-Pulse)](LICENSE)
+
 Apple Silicon Mac용 메뉴바 메모리·스왑 모니터이자 안전한 자동 정리 도구입니다.
+
+```bash
+brew install maker-KK/tap/mac-ram-pulse
+```
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/apps-dark.png">
+    <img src="docs/screenshots/apps-light.png" width="460" alt="앱별 리소스 탭: 앱 단위로 묶은 물리 RAM과 스왑 사용량, 유휴 데몬 회수 버튼">
+  </picture>
+</p>
 
 macOS의 '활성 상태 보기'는 앱 하나를 수십 개의 헬퍼 프로세스로 쪼개서 보여 줍니다. Mac Ram Pulse는 이 프로세스들을 **앱 단위로 합산**해, 각 앱이 실제 RAM과 SSD 스왑·압축 메모리를 얼마나 쓰는지 보여 줍니다. 또 **확실히 놀고 있는 빌드 데몬만** 골라 자동으로 회수합니다.
 
@@ -18,6 +36,25 @@ macOS의 '활성 상태 보기'는 앱 하나를 수십 개의 헬퍼 프로세�
 - **CPU 유휴 추적**: 스캔과 스캔 사이 구간마다 CPU 사용량을 비교합니다. 일정 시간 이상 거의 CPU를 쓰지 않은 프로세스만 회수하므로, 진행 중인 빌드나 CI 작업은 건드리지 않습니다.
 - **보호 대상**: Claude, Codex CLI 세션, OpenClaw, Colima·Linux VM, 그 밖의 Node 서버는 절대 종료하지 않습니다.
 - **외장 SSD 버퍼**: 개발 캐시(`~/.cache/uv`, `~/.gradle`, `~/.android`, DerivedData, `~/.npm`)가 외장 SSD로 옮겨졌는지 상태를 보여 줍니다.
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/autopilot-dark.png">
+        <img src="docs/screenshots/autopilot-light.png" alt="무인 자동관리 탭: 순찰 규칙과 자동 회수 기록">
+      </picture>
+      <br><sub><b>무인 자동관리</b>: 순찰 규칙과 회수 기록</sub>
+    </td>
+    <td align="center" width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/ssd-dark.png">
+        <img src="docs/screenshots/ssd-light.png" alt="외장 SSD 버퍼 탭: 내장·외장 SSD 여유 공간과 캐시 이전 상태">
+      </picture>
+      <br><sub><b>외장 SSD 버퍼</b>: 디스크 여유 공간과 캐시 이전 상태</sub>
+    </td>
+  </tr>
+</table>
 
 외부 셸 명령(`ps`, `top`, `vm_stat`)을 호출하지 않습니다. Darwin C API(`host_statistics64`, `sysctlbyname`, `proc_listallpids`, `proc_pid_rusage`, `proc_pidinfo`, `KERN_PROCARGS2`)만으로 동작합니다. 팝오버가 닫혀 있을 때는 메뉴바 제목만 갱신하므로 평상시 CPU 사용률은 0%에 가깝습니다.
 
@@ -54,6 +91,7 @@ swift test --enable-code-coverage
 
 - 테스트는 프로세스 종료, 앱 Quit, 외부 명령, 설정 저장을 모두 가짜(`MonitorEnvironment`)로 바꿔 실행합니다. 따라서 실제 프로세스를 끄거나 설정을 바꾸지 않습니다.
 - 통합 테스트는 실제 `node` 자식 프로세스를 띄워 libproc 스캔을 검증합니다. node가 없으면 건너뜁니다.
+- README 스크린샷은 실제 프로세스가 아닌 데모 데이터로 그립니다. 다시 만들려면 `MRP_SCREENSHOTS=1 swift test --filter ScreenshotTests`를 실행하세요.
 
 ## 구조
 

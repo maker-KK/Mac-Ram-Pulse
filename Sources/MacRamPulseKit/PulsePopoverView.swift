@@ -161,15 +161,7 @@ struct PulsePopoverView: View {
                         .font(.system(size: 16, weight: .bold, design: .rounded))
                         .foregroundColor(swapGB > 6.0 ? .orange : .primary)
 
-                    GeometryReader { geo in
-                        Rectangle()
-                            .fill(swapGB > 6.0 ? Color.orange : Color.green)
-                            .frame(width: max(2, geo.size.width * CGFloat(min(1.0, swapGB / swapTotalGB))))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.primary.opacity(0.08))
-                            .cornerRadius(3.5)
-                    }
-                    .frame(height: 7)
+                    MeterBar(fraction: swapGB / swapTotalGB, color: swapGB > 6.0 ? .orange : .green)
 
                     HStack {
                         Text(String(format: "내장여유 %.0fGB", monitor.stats.internalFreeGB))
@@ -518,8 +510,8 @@ struct PulsePopoverView: View {
                     }
                     Text(String(format: "%.1f GB 여유", monitor.stats.internalFreeGB))
                         .font(.system(size: 14, weight: .bold, design: .rounded))
-                    ProgressView(value: Double(monitor.stats.internalUsedPct), total: 100.0)
-                        .tint(monitor.stats.internalUsedPct > 85 ? .orange : .green)
+                    MeterBar(fraction: Double(monitor.stats.internalUsedPct) / 100,
+                             color: monitor.stats.internalUsedPct > 85 ? .orange : .green)
                 }
                 .padding(10)
                 .background(Color.primary.opacity(0.05))
@@ -538,8 +530,7 @@ struct PulsePopoverView: View {
                     Text(String(format: "%.1f GB 여유", monitor.stats.externalFreeGB))
                         .font(.system(size: 14, weight: .bold, design: .rounded))
                         .foregroundColor(.blue)
-                    ProgressView(value: Double(monitor.stats.externalUsedPct), total: 100.0)
-                        .tint(.blue)
+                    MeterBar(fraction: Double(monitor.stats.externalUsedPct) / 100, color: .blue)
                 }
                 .padding(10)
                 .background(Color.primary.opacity(0.05))
@@ -629,5 +620,25 @@ struct PulsePopoverView: View {
             return String(format: "%.2fGB", mb / 1024.0)
         }
         return String(format: "%.0fMB", mb)
+    }
+}
+
+/// Thin horizontal gauge. Drawn by hand (not ProgressView) so its tint also shows
+/// when the popover's window is inactive.
+struct MeterBar: View {
+    let fraction: Double
+    let color: Color
+    var height: CGFloat = 7
+
+    var body: some View {
+        GeometryReader { geo in
+            Rectangle()
+                .fill(color)
+                .frame(width: max(2, geo.size.width * CGFloat(min(1.0, max(0, fraction)))))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.08))
+                .cornerRadius(height / 2)
+        }
+        .frame(height: height)
     }
 }
