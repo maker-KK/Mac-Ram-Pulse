@@ -1,0 +1,3 @@
+import MacRamPulseKit
+
+MacRamPulseApp.run()
