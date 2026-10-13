@@ -2,7 +2,7 @@ import Cocoa
 import SwiftUI
 import Darwin
 
-// MARK: - Modern SwiftUI Popover Interface (v5.3)
+// MARK: - Modern SwiftUI Popover Interface (v5.4)
 
 struct PulsePopoverView: View {
     @ObservedObject var monitor: SystemMemoryMonitor
@@ -44,7 +44,7 @@ struct PulsePopoverView: View {
                     HStack(spacing: 6) {
                         Text("MacRamPulse")
                             .font(.system(size: 15, weight: .bold))
-                        Text("v5.3")
+                        Text("v5.4")
                             .font(.system(size: 9, weight: .bold))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
@@ -287,7 +287,7 @@ struct PulsePopoverView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.top, 40)
                     }
-                    ForEach(monitor.filteredAndSortedGroups.prefix(15)) { group in
+                    ForEach(monitor.visibleGroups) { group in
                         HStack(spacing: 10) {
                             Text(group.icon)
                                 .font(.system(size: 18))
@@ -393,6 +393,13 @@ struct PulsePopoverView: View {
                 }
             }
             .frame(height: 265)
+
+            if monitor.hiddenGroupCount > 0 {
+                Text("외 \(monitor.hiddenGroupCount)개 앱은 검색으로 찾을 수 있어요")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity)
+            }
         }
     }
 
@@ -523,13 +530,15 @@ struct PulsePopoverView: View {
                             .font(.system(size: 10.5, weight: .semibold))
                             .foregroundColor(.secondary)
                         Spacer()
-                        Text("\(monitor.stats.externalUsedPct)%")
+                        Text(monitor.stats.externalMounted ? "\(monitor.stats.externalUsedPct)%" : "—")
                             .font(.system(size: 10.5, weight: .bold))
                             .foregroundColor(.blue)
                     }
-                    Text(String(format: "%.1f GB 여유", monitor.stats.externalFreeGB))
+                    Text(monitor.stats.externalMounted
+                         ? String(format: "%.1f GB 여유", monitor.stats.externalFreeGB)
+                         : "연결 안 됨")
                         .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .foregroundColor(.blue)
+                        .foregroundColor(monitor.stats.externalMounted ? .blue : .secondary)
                     MeterBar(fraction: Double(monitor.stats.externalUsedPct) / 100, color: .blue)
                 }
                 .padding(10)
@@ -586,13 +595,13 @@ struct PulsePopoverView: View {
                                     .foregroundColor(.green)
                                     .frame(width: 82, alignment: .trailing)
                             } else if target.exists {
-                                Button("외장 이전") {
+                                Button(monitor.stats.externalMounted ? "외장 이전" : "SSD 없음") {
                                     monitor.offloadToExternalSSD(target)
                                 }
                                 .buttonStyle(.borderedProminent)
                                 .controlSize(.small)
                                 .frame(width: 82)
-                                .disabled(monitor.isBusy)
+                                .disabled(monitor.isBusy || !monitor.stats.externalMounted)
                             } else {
                                 Text("미생성")
                                     .font(.system(size: 10))
@@ -611,12 +620,13 @@ struct PulsePopoverView: View {
         }
     }
 
+    /// Switches to GB at 1023.5MB so a value never renders as "1024M".
     func formatShort(_ mb: Double) -> String {
-        mb >= 1024.0 ? String(format: "%.1fG", mb / 1024.0) : String(format: "%.0fM", mb)
+        mb >= 1023.5 ? String(format: "%.1fG", mb / 1024.0) : String(format: "%.0fM", mb)
     }
 
     func formatMB(_ mb: Double) -> String {
-        if mb >= 1024.0 {
+        if mb >= 1023.5 {
             return String(format: "%.2fGB", mb / 1024.0)
         }
         return String(format: "%.0fMB", mb)
@@ -634,7 +644,7 @@ struct MeterBar: View {
         GeometryReader { geo in
             Rectangle()
                 .fill(color)
-                .frame(width: max(2, geo.size.width * CGFloat(min(1.0, max(0, fraction)))))
+                .frame(width: fraction > 0 ? max(2, geo.size.width * CGFloat(min(1.0, fraction))) : 0)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color.primary.opacity(0.08))
                 .cornerRadius(height / 2)

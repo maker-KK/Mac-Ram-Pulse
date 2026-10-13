@@ -49,6 +49,19 @@ struct ScreenshotTests {
         monitor.searchText = "photoshop"
         try? render(monitor, dark: true, to: dir.appendingPathComponent("search-empty.png"))
         monitor.searchText = ""
+        let base = monitor.stats
+        monitor.stats.groups += (0..<14).map { i in
+            AppGroupMemory(name: "Helper App \(i)", icon: "📦", rssMB: 60, swapMB: 20, totalMB: 80, processCount: 1,
+                           pids: [pid_t(900 + i)], idlePids: [], idleMB: 0, isProtected: false, isReclaimableDaemon: false)
+        }
+        try? render(monitor, dark: true, to: dir.appendingPathComponent("hidden-rows.png"))
+        monitor.stats = base
+        monitor.mainTab = .ssdBoost
+        monitor.stats.externalMounted = false
+        monitor.stats.externalFreeGB = 0
+        monitor.stats.externalUsedPct = 0
+        try? render(monitor, dark: true, to: dir.appendingPathComponent("ssd-unplugged.png"))
+        monitor.stats = base
     }
 
     static func render(_ monitor: SystemMemoryMonitor, dark: Bool, to url: URL) throws {
@@ -87,7 +100,7 @@ struct ScreenshotTests {
         s.kernelFreeLevel = 52; s.vmPressureLevel = 1
         s.swapUsedMB = 3.2 * 1024; s.swapTotalMB = 6 * 1024
         s.internalFreeGB = 182.4; s.internalTotalGB = 460; s.internalUsedPct = 60
-        s.externalFreeGB = 687.8; s.externalTotalGB = 931; s.externalUsedPct = 26
+        s.externalFreeGB = 687.8; s.externalTotalGB = 931; s.externalUsedPct = 26; s.externalMounted = true
         s.scanDurationMs = 7.4
 
         func g(_ name: String, _ icon: String, rss: Double, swap: Double, n: Int,

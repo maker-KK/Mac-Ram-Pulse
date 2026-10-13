@@ -2,6 +2,14 @@ import Foundation
 import Testing
 @testable import MacRamPulseKit
 
+/// Thread-safe counter (scans run on the monitor's background queue).
+final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var n = 0
+    func increment() { lock.lock(); n += 1; lock.unlock() }
+    var value: Int { lock.lock(); defer { lock.unlock() }; return n }
+}
+
 /// Records signals instead of sending them; never touches real processes or real preferences.
 final class Spy {
     var signals: [(pid_t, Int32)] = []
@@ -12,6 +20,14 @@ final class Spy {
     /// nil = live libproc scan
     var scanResult: [ProcSample]? = []
     var confirmTimeout: TimeInterval = 3.5
+    /// Timers are effectively off unless a test shortens them.
+    var quickRefreshInterval: TimeInterval = 999
+    var popoverRefreshInterval: TimeInterval = 999
+    var patrolInterval: TimeInterval = 999
+    var toastDuration: TimeInterval = 6
+    var startsAutomatically = false
+    var volumeMounted = true
+    let scans = Counter()
     /// pid -> current executable path; pids not listed report the path recorded at scan time.
     var currentPaths: [pid_t: String] = [:]
     let suiteName = "MacRamPulseTests.\(UUID().uuidString)"
@@ -20,13 +36,22 @@ final class Spy {
     func makeMonitor() -> SystemMemoryMonitor {
         var env = MonitorEnvironment()
         env.defaults = defaults
-        env.startsAutomatically = false
-        env.sendSignal = { [unowned self] pid, sig in self.signals.append((pid, sig)); return 0 }
-        env.quitGUIApps = { [unowned self] pids in self.quitRequests.append(pids); return self.guiAppCount }
-        env.runCommand = { [unowned self] path, args in self.commands.append((path, args)); return self.commandResult }
-        if let scan = scanResult { env.scanOverride = { scan } }
+        env.startsAutomatically = startsAutomatically
+        env.quickRefreshInterval = quickRefreshInterval
+        env.popoverRefreshInterval = popoverRefreshInterval
+        env.patrolInterval = patrolInterval
+        env.toastDuration = toastDuration
+        let mounted = volumeMounted
+        env.isVolumeMounted = { _ in mounted }
+        env.sendSignal = { pid, sig in self.signals.append((pid, sig)); return 0 }
+        env.quitGUIApps = { pids in self.quitRequests.append(pids); return self.guiAppCount }
+        env.runCommand = { path, args in self.commands.append((path, args)); return self.commandResult }
+        if let scan = scanResult {
+            let scans = self.scans
+            env.scanOverride = { scans.increment(); return scan }
+        }
         env.confirmTimeout = confirmTimeout
-        env.currentPath = { [unowned self] pid in self.currentPaths[pid] ?? "" }
+        env.currentPath = { pid in self.currentPaths[pid] ?? "" }
         return SystemMemoryMonitor(env: env)
     }
 

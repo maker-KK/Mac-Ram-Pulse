@@ -30,6 +30,8 @@ struct AppGroupMemory: Identifiable {
     let isReclaimableDaemon: Bool
     /// Executable path per pid at scan time, to avoid signalling a reused pid.
     var pidPaths: [pid_t: String] = [:]
+    /// Footprint per pid at scan time.
+    var pidMB: [pid_t: Double] = [:]
 
     /// "유휴 데몬" badge: a reclaimable daemon row whose every process is idle.
     var showsIdleBadge: Bool { isReclaimableDaemon && !pids.isEmpty && idlePids.count == pids.count }
@@ -65,8 +67,9 @@ struct MemoryStats {
     var internalTotalGB: Double = 460.0
     var internalUsedPct: Int = 0
     var externalFreeGB: Double = 0.0
-    var externalTotalGB: Double = 931.0
+    var externalTotalGB: Double = 0
     var externalUsedPct: Int = 0
+    var externalMounted = false
 
     var scanDurationMs: Double = 0.0
     var groups: [AppGroupMemory] = []

@@ -17,6 +17,23 @@ struct MonitorEnvironment {
     var scanOverride: (() -> [ProcSample])? = nil
     /// How long a "정리" tap stays armed before it needs to be tapped again.
     var confirmTimeout: TimeInterval = 3.5
+    var quickRefreshInterval: TimeInterval = SystemMemoryMonitor.quickRefreshInterval
+    var popoverRefreshInterval: TimeInterval = SystemMemoryMonitor.popoverRefreshInterval
+    var patrolInterval: TimeInterval = SystemMemoryMonitor.patrolInterval
+    var toastDuration: TimeInterval = SystemMemoryMonitor.toastDuration
+    /// Mount point of the external cache SSD.
+    var externalVolumePath = "/Volumes/ExternalSSD"
+    var isVolumeMounted: (String) -> Bool = MonitorEnvironment.isMountPoint
+
+    /// True only if `path` is itself a mount point (a leftover empty folder under /Volumes is not).
+    static func isMountPoint(_ path: String) -> Bool {
+        var fs = statfs()
+        guard statfs(path, &fs) == 0 else { return false }
+        let mountedOn = withUnsafePointer(to: &fs.f_mntonname) {
+            $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { String(cString: $0) }
+        }
+        return mountedOn == path
+    }
     /// Current executable path of a pid ("" if gone).
     var currentPath: (pid_t) -> String = MonitorEnvironment.executablePath
 
@@ -83,7 +100,14 @@ class SystemMemoryMonitor: ObservableObject {
         return chip.isEmpty ? "\(gb)GB" : "\(chip) \(gb)GB"
     }()
 
-    @Published var stats = MemoryStats()
+    @Published var stats = MemoryStats() {
+        didSet {
+            // The armed app quit on its own: don't leave a stale 종료확인 for a future same-named app.
+            if let armed = confirmingGroupId, !stats.groups.contains(where: { $0.id == armed }) {
+                disarmConfirmation()
+            }
+        }
+    }
     @Published var mainTab: MainTab = .apps
     @Published var sortMode: SortMode = .swap
     @Published var searchText: String = ""
@@ -128,6 +152,12 @@ class SystemMemoryMonitor: ObservableObject {
         env.scanOverride?() ?? scanner.scan()
     }
 
+    deinit {
+        statusBarTimer?.invalidate()
+        popoverTimer?.invalidate()
+        patrolTimer?.invalidate()
+    }
+
     init(env: MonitorEnvironment = MonitorEnvironment()) {
         self.env = env
         let ud = env.defaults
@@ -157,13 +187,13 @@ class SystemMemoryMonitor: ObservableObject {
         refreshFull()
 
         // 1. Lightweight StatusBar Timer (popover closed: Mach syscalls only)
-        statusBarTimer = Timer.scheduledTimer(withTimeInterval: Self.quickRefreshInterval, repeats: true) { [weak self] _ in
+        statusBarTimer = Timer.scheduledTimer(withTimeInterval: env.quickRefreshInterval, repeats: true) { [weak self] _ in
             guard let self = self, !self.isPopoverVisible, !self.isBusy else { return }
             self.refreshQuickStatusBarOnly()
         }
 
         // 2. Autonomous Background Patrol
-        patrolTimer = Timer.scheduledTimer(withTimeInterval: Self.patrolInterval, repeats: true) { [weak self] _ in
+        patrolTimer = Timer.scheduledTimer(withTimeInterval: env.patrolInterval, repeats: true) { [weak self] _ in
             guard let self = self, self.autoGuardEnabled, !self.isBusy else { return }
             self.runAutoPatrol(manualTrigger: false)
         }
@@ -175,7 +205,7 @@ class SystemMemoryMonitor: ObservableObject {
         popoverTimer = nil
         if open {
             refreshFull()
-            popoverTimer = Timer.scheduledTimer(withTimeInterval: Self.popoverRefreshInterval, repeats: true) { [weak self] _ in
+            popoverTimer = Timer.scheduledTimer(withTimeInterval: env.popoverRefreshInterval, repeats: true) { [weak self] _ in
                 guard let self = self, self.isPopoverVisible, !self.isBusy else { return }
                 self.refreshFull()
             }
@@ -207,6 +237,12 @@ class SystemMemoryMonitor: ObservableObject {
         }
     }
 
+    static let maxVisibleRows = 15
+
+    /// Rows the list shows; the rest are counted in `hiddenGroupCount` and reachable by search.
+    var visibleGroups: [AppGroupMemory] { Array(filteredAndSortedGroups.prefix(Self.maxVisibleRows)) }
+    var hiddenGroupCount: Int { max(0, filteredAndSortedGroups.count - Self.maxVisibleRows) }
+
     var hasNoSearchResults: Bool {
         !searchText.trimmingCharacters(in: .whitespaces).isEmpty && filteredAndSortedGroups.isEmpty
     }
@@ -220,7 +256,7 @@ class SystemMemoryMonitor: ObservableObject {
         guard !lastActionMessage.isEmpty else { return }
         let work = DispatchWorkItem { [weak self] in self?.lastActionMessage = "" }
         toastDismissWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.toastDuration, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + env.toastDuration, execute: work)
     }
 
     private static let logTimeFormatter: DateFormatter = {
@@ -289,7 +325,7 @@ class SystemMemoryMonitor: ObservableObject {
         let t0 = CFAbsoluteTimeGetCurrent()
         var s = MemoryStats()
         Self.readVM(into: &s)
-        Self.readDisks(into: &s)
+        Self.readDisks(into: &s, externalPath: env.externalVolumePath)
         s.offloadTargets = Self.readOffloadTargets()
         let grouped = Self.buildGroups(scanProcesses())
         s.groups = grouped.groups
@@ -337,7 +373,7 @@ class SystemMemoryMonitor: ObservableObject {
         }
     }
 
-    static func readDisks(into s: inout MemoryStats) {
+    static func readDisks(into s: inout MemoryStats, externalPath: String = "/Volumes/ExternalSSD") {
         let gbDiv = 1024.0 * 1024.0 * 1024.0
         if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: "/"),
            let freeSpace = attrs[.systemFreeSize] as? NSNumber,
@@ -346,12 +382,19 @@ class SystemMemoryMonitor: ObservableObject {
             s.internalTotalGB = totalSpace.doubleValue / gbDiv
             s.internalUsedPct = Int(((s.internalTotalGB - s.internalFreeGB) / max(1, s.internalTotalGB)) * 100.0)
         }
-        if let extAttrs = try? FileManager.default.attributesOfFileSystem(forPath: "/Volumes/ExternalSSD"),
+        if MonitorEnvironment.isMountPoint(externalPath),
+           let extAttrs = try? FileManager.default.attributesOfFileSystem(forPath: externalPath),
            let extFree = extAttrs[.systemFreeSize] as? NSNumber,
            let extTotal = extAttrs[.systemSize] as? NSNumber {
+            s.externalMounted = true
             s.externalFreeGB = extFree.doubleValue / gbDiv
             s.externalTotalGB = extTotal.doubleValue / gbDiv
             s.externalUsedPct = Int(((s.externalTotalGB - s.externalFreeGB) / max(1, s.externalTotalGB)) * 100.0)
+        } else {
+            s.externalMounted = false
+            s.externalFreeGB = 0
+            s.externalTotalGB = 0
+            s.externalUsedPct = 0
         }
     }
 
@@ -392,6 +435,7 @@ class SystemMemoryMonitor: ObservableObject {
             var pids: [pid_t] = []
             var idlePids: [pid_t] = []
             var pidPaths: [pid_t: String] = [:]
+            var pidMB: [pid_t: Double] = [:]
         }
         var dict: [String: Acc] = [:]
         var reclaimMB = 0.0
@@ -404,6 +448,7 @@ class SystemMemoryMonitor: ObservableObject {
             acc.totalMB += s.footprintMB
             acc.pids.append(s.pid)
             acc.pidPaths[s.pid] = s.path
+            acc.pidMB[s.pid] = s.footprintMB
             if s.idleSec >= manualIdleSec {
                 acc.idlePids.append(s.pid)
                 acc.idleMB += s.footprintMB
@@ -427,7 +472,8 @@ class SystemMemoryMonitor: ObservableObject {
                     idleMB: a.idleMB,
                     isProtected: a.info.isProtected,
                     isReclaimableDaemon: a.info.isReclaimable,
-                    pidPaths: a.pidPaths
+                    pidPaths: a.pidPaths,
+                    pidMB: a.pidMB
                 )
             }
         return (groups, reclaimMB)
@@ -549,18 +595,14 @@ class SystemMemoryMonitor: ObservableObject {
     }
 
     /// SIGTERM only pids that still run the executable seen at scan time (pids get reused).
-    /// Returns how many pids were skipped.
+    /// Returns the pids that were actually signalled.
     @discardableResult
-    private func signalIfUnchanged(_ pids: [pid_t], in group: AppGroupMemory) -> Int {
-        var skipped = 0
-        for pid in pids {
-            if let seen = group.pidPaths[pid], env.currentPath(pid) != seen {
-                skipped += 1
-                continue
-            }
+    private func signalIfUnchanged(_ pids: [pid_t], in group: AppGroupMemory) -> [pid_t] {
+        pids.filter { pid in
+            if let seen = group.pidPaths[pid], env.currentPath(pid) != seen { return false }
             _ = env.sendSignal(pid, SIGTERM)
+            return true
         }
-        return skipped
     }
 
     /// GUI apps get a normal Quit (they can save state; helpers exit with them).
@@ -596,9 +638,21 @@ class SystemMemoryMonitor: ObservableObject {
                 : "✅ 현재 점유 중인 유휴 빌드 데몬(Java/Dart)이 없습니다."
             return
         }
-        let skipped = targets.reduce(0) { $0 + signalIfUnchanged($1.idlePids, in: $1) }
-        let freedMB = targets.reduce(0) { $0 + $1.idleMB }
-        var msg = String(format: "🔥 유휴 빌드 데몬 %d개 회수 완료 (약 %.1fGB 반환)", idleCount - skipped, freedMB / 1024.0)
+        var signalled = 0
+        var freedMB = 0.0
+        for group in targets {
+            let sent = signalIfUnchanged(group.idlePids, in: group)
+            signalled += sent.count
+            // Per-pid sizes when known; otherwise an even share of the group's idle total.
+            let share = group.idlePids.isEmpty ? 0 : group.idleMB / Double(group.idlePids.count)
+            freedMB += sent.reduce(0) { $0 + (group.pidMB[$1] ?? share) }
+        }
+        guard signalled > 0 else {
+            lastActionMessage = "ℹ️ 회수하려던 데몬이 이미 종료되었습니다."
+            refreshFull()
+            return
+        }
+        var msg = String(format: "🔥 유휴 빌드 데몬 %d개 회수 완료 (약 %.1fGB 반환)", signalled, freedMB / 1024.0)
         if busyCount > 0 { msg += " · 작업 중 \(busyCount)개 유지" }
         addLog(msg)
         lastActionMessage = msg
@@ -643,6 +697,10 @@ class SystemMemoryMonitor: ObservableObject {
     /// offload.sh exits 0 on success and when the folder is already linked.
     func offloadToExternalSSD(_ target: OffloadTarget) {
         guard !target.isOffloaded, !isBusy else { return }
+        guard env.isVolumeMounted(env.externalVolumePath) else {
+            lastActionMessage = "⚠️ 외장 SSD가 연결되어 있지 않아 이전할 수 없습니다."
+            return
+        }
         isBusy = true
         lastActionMessage = "🔎 '\(target.title)' 사용 중인 프로세스 확인 중..."
         scanQueue.async {
