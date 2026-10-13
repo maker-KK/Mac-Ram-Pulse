@@ -26,7 +26,17 @@ macOS의 '활성 상태 보기'는 앱 하나를 수십 개의 헬퍼 프로세�
 - macOS 13 이상, Apple Silicon
 - Xcode 16 이상 (Swift 6 툴체인. 테스트에 Swift Testing을 사용합니다)
 
-## 빌드와 설치
+## 설치 (Homebrew)
+
+```bash
+brew install maker-KK/tap/mac-ram-pulse
+mac-ram-pulse                       # 바로 실행
+brew services start mac-ram-pulse   # 로그인할 때마다 자동 실행
+```
+
+설치할 때 이 Mac에서 소스를 직접 빌드합니다(약 20초). 그래서 서명되지 않은 앱이어도 Gatekeeper 경고가 뜨지 않습니다. 업데이트는 `brew upgrade mac-ram-pulse`로 합니다.
+
+## 소스에서 빌드
 
 ```bash
 scripts/build_app.sh            # .build/MacRamPulse.app 생성
