@@ -11,6 +11,9 @@ final class Spy {
     var commandResult = CommandResult(status: 0, output: "완료\n")
     /// nil = live libproc scan
     var scanResult: [ProcSample]? = []
+    var confirmTimeout: TimeInterval = 3.5
+    /// pid -> current executable path; pids not listed report the path recorded at scan time.
+    var currentPaths: [pid_t: String] = [:]
     let suiteName = "MacRamPulseTests.\(UUID().uuidString)"
     lazy var defaults = UserDefaults(suiteName: suiteName)!
 
@@ -22,6 +25,8 @@ final class Spy {
         env.quitGUIApps = { [unowned self] pids in self.quitRequests.append(pids); return self.guiAppCount }
         env.runCommand = { [unowned self] path, args in self.commands.append((path, args)); return self.commandResult }
         if let scan = scanResult { env.scanOverride = { scan } }
+        env.confirmTimeout = confirmTimeout
+        env.currentPath = { [unowned self] pid in self.currentPaths[pid] ?? "" }
         return SystemMemoryMonitor(env: env)
     }
 

@@ -23,6 +23,7 @@ struct ScreenshotTests {
         let monitor = spy.makeMonitor()
         Self.loadDemo(into: monitor)
 
+        defer { Self.renderReviewStates(monitor) }
         let shots: [(MainTab, String)] = [(.apps, "apps"), (.autopilot, "autopilot"), (.ssdBoost, "ssd")]
         for (tab, name) in shots {
             monitor.mainTab = tab
@@ -32,6 +33,22 @@ struct ScreenshotTests {
                 #expect(FileManager.default.fileExists(atPath: url.path))
             }
         }
+    }
+
+    /// States worth eyeballing after UI changes; written to $TMPDIR/mrp-review, not to the README.
+    static func renderReviewStates(_ monitor: SystemMemoryMonitor) {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mrp-review")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        monitor.mainTab = .apps
+        var groups = monitor.stats.groups
+        groups[0] = AppGroupMemory(name: groups[0].name, icon: groups[0].icon, rssMB: groups[0].rssMB, swapMB: groups[0].swapMB,
+                                   totalMB: groups[0].totalMB, processCount: 3, pids: [1, 2, 3], idlePids: [1], idleMB: 300,
+                                   isProtected: false, isReclaimableDaemon: true)
+        monitor.stats.groups = groups
+        try? render(monitor, dark: true, to: dir.appendingPathComponent("busy-daemon.png"))
+        monitor.searchText = "photoshop"
+        try? render(monitor, dark: true, to: dir.appendingPathComponent("search-empty.png"))
+        monitor.searchText = ""
     }
 
     static func render(_ monitor: SystemMemoryMonitor, dark: Bool, to url: URL) throws {
@@ -74,13 +91,14 @@ struct ScreenshotTests {
         s.scanDurationMs = 7.4
 
         func g(_ name: String, _ icon: String, rss: Double, swap: Double, n: Int,
-               protected: Bool = false, reclaimable: Bool = false) -> AppGroupMemory {
-            AppGroupMemory(name: name, icon: icon, rssMB: rss, swapMB: swap, totalMB: rss + swap,
-                           processCount: n, pids: Array(1...Int32(n)), idlePids: [], idleMB: 0,
+               protected: Bool = false, reclaimable: Bool = false, idle: Bool = false) -> AppGroupMemory {
+            let pids = Array(1...Int32(n))
+            return AppGroupMemory(name: name, icon: icon, rssMB: rss, swapMB: swap, totalMB: rss + swap,
+                           processCount: n, pids: pids, idlePids: idle ? pids : [], idleMB: idle ? rss + swap : 0,
                            isProtected: protected, isReclaimableDaemon: reclaimable)
         }
         s.groups = [
-            g("Android Studio (Java/Gradle 데몬)", "☕", rss: 410, swap: 2_840, n: 3, reclaimable: true),
+            g("Android Studio (Java/Gradle 데몬)", "☕", rss: 410, swap: 2_840, n: 3, reclaimable: true, idle: true),
             g("Codex MCP·REPL 하위 서버", "🧩", rss: 640, swap: 2_310, n: 41),
             g("Google Chrome", "🌐", rss: 1_380, swap: 1_120, n: 22),
             g("Colima / Linux VM", "🐳", rss: 520, swap: 1_060, n: 4, protected: true),

@@ -28,6 +28,11 @@ struct AppGroupMemory: Identifiable {
     let idleMB: Double
     let isProtected: Bool
     let isReclaimableDaemon: Bool
+    /// Executable path per pid at scan time, to avoid signalling a reused pid.
+    var pidPaths: [pid_t: String] = [:]
+
+    /// "유휴 데몬" badge: a reclaimable daemon row whose every process is idle.
+    var showsIdleBadge: Bool { isReclaimableDaemon && !pids.isEmpty && idlePids.count == pids.count }
 }
 
 struct OffloadTarget: Identifiable {

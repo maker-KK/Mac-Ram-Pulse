@@ -28,10 +28,12 @@ struct MonitorCommandTests {
         #expect(spy.defaults.integer(forKey: "MacRamPulse_TotalCleanCount") == 1)
     }
 
-    @Test("cache purge: success and cancellation", arguments: [(Int32(0), "✅"), (Int32(1), "ℹ️")])
-    func purge(status: Int32, prefix: String) async throws {
+    @Test("cache purge: success and cancellation", arguments: [
+        (Int32(0), "", "✅"), (Int32(1), "execution error: User canceled. (-128)", "ℹ️"),
+    ])
+    func purge(status: Int32, output: String, prefix: String) async throws {
         let spy = Spy()
-        spy.commandResult = CommandResult(status: status, output: "")
+        spy.commandResult = CommandResult(status: status, output: output)
         let m = spy.makeMonitor()
         m.purgePhysicalRAMCache()
         #expect(m.isBusy)

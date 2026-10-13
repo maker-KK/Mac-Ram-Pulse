@@ -2,7 +2,7 @@ import Cocoa
 import SwiftUI
 import Darwin
 
-// MARK: - Modern SwiftUI Popover Interface (v5.2)
+// MARK: - Modern SwiftUI Popover Interface (v5.3)
 
 struct PulsePopoverView: View {
     @ObservedObject var monitor: SystemMemoryMonitor
@@ -44,7 +44,7 @@ struct PulsePopoverView: View {
                     HStack(spacing: 6) {
                         Text("MacRamPulse")
                             .font(.system(size: 15, weight: .bold))
-                        Text("v5.2")
+                        Text("v5.3")
                             .font(.system(size: 9, weight: .bold))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
@@ -278,6 +278,15 @@ struct PulsePopoverView: View {
 
             ScrollView {
                 VStack(spacing: 6) {
+                    if monitor.filteredAndSortedGroups.isEmpty {
+                        Text(monitor.hasNoSearchResults
+                             ? "'\(monitor.searchText.trimmingCharacters(in: .whitespaces))'와(과) 일치하는 앱이 없습니다"
+                             : "프로세스를 읽는 중…")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 40)
+                    }
                     ForEach(monitor.filteredAndSortedGroups.prefix(15)) { group in
                         HStack(spacing: 10) {
                             Text(group.icon)
@@ -296,12 +305,12 @@ struct PulsePopoverView: View {
                                         .background(Color.primary.opacity(0.08))
                                         .cornerRadius(4)
                                     if group.isReclaimableDaemon {
-                                        Text("유휴 데몬")
+                                        Text(group.showsIdleBadge ? "유휴 데몬" : "작업 중")
                                             .font(.system(size: 9, weight: .bold))
                                             .padding(.horizontal, 5)
                                             .padding(.vertical, 1)
-                                            .background(Color.orange.opacity(0.2))
-                                            .foregroundColor(.orange)
+                                            .background((group.showsIdleBadge ? Color.orange : Color.blue).opacity(0.2))
+                                            .foregroundColor(group.showsIdleBadge ? .orange : .blue)
                                             .cornerRadius(4)
                                     }
                                 }
@@ -357,7 +366,7 @@ struct PulsePopoverView: View {
                                     .frame(width: 56)
                             } else if monitor.confirmingGroupId == group.id {
                                 Button("종료확인") {
-                                    monitor.terminateGroup(group)
+                                    monitor.confirmTerminate(group)
                                 }
                                 .buttonStyle(.borderedProminent)
                                 .tint(.red)
@@ -365,19 +374,10 @@ struct PulsePopoverView: View {
                                 .frame(width: 56)
                             } else {
                                 Button(group.isReclaimableDaemon ? "회수" : "정리") {
-                                    if group.isReclaimableDaemon {
-                                        monitor.terminateGroup(group)
-                                    } else {
-                                        monitor.confirmingGroupId = group.id
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
-                                            if monitor.confirmingGroupId == group.id {
-                                                monitor.confirmingGroupId = nil
-                                            }
-                                        }
-                                    }
+                                    monitor.requestTerminate(group)
                                 }
                                 .help(group.isReclaimableDaemon
-                                      ? "빌드 데몬을 즉시 종료합니다 (다음 빌드 때 자동 재시작)"
+                                      ? "1분 이상 CPU를 쓰지 않은 데몬만 종료합니다 (작업 중인 빌드는 유지)"
                                       : "앱은 정상 종료(Quit)를 요청하고, 백그라운드 프로세스는 종료 신호를 보냅니다")
                                 .buttonStyle(.bordered)
                                 .tint(group.isReclaimableDaemon ? .orange : .primary)

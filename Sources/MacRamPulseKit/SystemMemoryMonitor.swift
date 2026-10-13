@@ -15,6 +15,15 @@ struct MonitorEnvironment {
     var runCommand: (String, [String]) -> CommandResult = MonitorEnvironment.runProcess
     /// Replaces the live libproc scan (unit tests).
     var scanOverride: (() -> [ProcSample])? = nil
+    /// How long a "정리" tap stays armed before it needs to be tapped again.
+    var confirmTimeout: TimeInterval = 3.5
+    /// Current executable path of a pid ("" if gone).
+    var currentPath: (pid_t) -> String = MonitorEnvironment.executablePath
+
+    static func executablePath(_ pid: pid_t) -> String {
+        var buf = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        return proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 ? String(cString: buf) : ""
+    }
 
     static func runProcess(_ path: String, _ args: [String]) -> CommandResult {
         let task = Process()
@@ -109,6 +118,7 @@ class SystemMemoryMonitor: ObservableObject {
     private var popoverTimer: Timer?
     private var patrolTimer: Timer?
     private var toastDismissWork: DispatchWorkItem?
+    private var confirmWork: DispatchWorkItem?
     var onUpdateStatusTitle: ((String) -> Void)?
     private let env: MonitorEnvironment
     private var defaults: UserDefaults { env.defaults }
@@ -170,7 +180,7 @@ class SystemMemoryMonitor: ObservableObject {
                 self.refreshFull()
             }
         } else {
-            confirmingGroupId = nil
+            disarmConfirmation()
         }
     }
 
@@ -182,14 +192,23 @@ class SystemMemoryMonitor: ObservableObject {
         } else {
             base = stats.groups.filter { $0.name.lowercased().contains(q) }
         }
+        let key: (AppGroupMemory) -> Double
         switch sortMode {
-        case .swap:
-            return base.sorted { $0.swapMB > $1.swapMB }
-        case .ram:
-            return base.sorted { $0.rssMB > $1.rssMB }
-        case .total:
-            return base.sorted { $0.totalMB > $1.totalMB }
+        case .swap: key = { $0.swapMB }
+        case .ram: key = { $0.rssMB }
+        case .total: key = { $0.totalMB }
         }
+        // Groups come from a Dictionary; tie-break so rows don't jump on every refresh.
+        return base.sorted { a, b in
+            let (ka, kb) = (key(a), key(b))
+            if ka != kb { return ka > kb }
+            if a.totalMB != b.totalMB { return a.totalMB > b.totalMB }
+            return a.name < b.name
+        }
+    }
+
+    var hasNoSearchResults: Bool {
+        !searchText.trimmingCharacters(in: .whitespaces).isEmpty && filteredAndSortedGroups.isEmpty
     }
 
     var isToastWarning: Bool {
@@ -372,6 +391,7 @@ class SystemMemoryMonitor: ObservableObject {
             var rssMB = 0.0, swapMB = 0.0, totalMB = 0.0, idleMB = 0.0
             var pids: [pid_t] = []
             var idlePids: [pid_t] = []
+            var pidPaths: [pid_t: String] = [:]
         }
         var dict: [String: Acc] = [:]
         var reclaimMB = 0.0
@@ -383,6 +403,7 @@ class SystemMemoryMonitor: ObservableObject {
             acc.swapMB += max(0, s.footprintMB - s.rssMB)
             acc.totalMB += s.footprintMB
             acc.pids.append(s.pid)
+            acc.pidPaths[s.pid] = s.path
             if s.idleSec >= manualIdleSec {
                 acc.idlePids.append(s.pid)
                 acc.idleMB += s.footprintMB
@@ -405,7 +426,8 @@ class SystemMemoryMonitor: ObservableObject {
                     idlePids: a.idlePids,
                     idleMB: a.idleMB,
                     isProtected: a.info.isProtected,
-                    isReclaimableDaemon: a.info.isReclaimable
+                    isReclaimableDaemon: a.info.isReclaimable,
+                    pidPaths: a.pidPaths
                 )
             }
         return (groups, reclaimMB)
@@ -496,13 +518,58 @@ class SystemMemoryMonitor: ObservableObject {
 
     // MARK: - User Actions
 
+    /// Row button "정리"/"회수". Daemon rows reclaim only their idle processes; app rows are armed
+    /// for `confirmTimeout` and need a second tap on "종료확인".
+    func requestTerminate(_ group: AppGroupMemory) {
+        guard !group.isProtected else { return }
+        if group.isReclaimableDaemon {
+            reclaim([group])
+            return
+        }
+        confirmWork?.cancel()
+        confirmingGroupId = group.id
+        let work = DispatchWorkItem { [weak self] in
+            if self?.confirmingGroupId == group.id { self?.confirmingGroupId = nil }
+        }
+        confirmWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + env.confirmTimeout, execute: work)
+    }
+
+    /// Row button "종료확인": acts only on the row that is currently armed, and only once.
+    func confirmTerminate(_ group: AppGroupMemory) {
+        guard confirmingGroupId == group.id, !group.isProtected else { return }
+        disarmConfirmation()
+        terminateGroup(group)
+    }
+
+    private func disarmConfirmation() {
+        confirmWork?.cancel()
+        confirmWork = nil
+        confirmingGroupId = nil
+    }
+
+    /// SIGTERM only pids that still run the executable seen at scan time (pids get reused).
+    /// Returns how many pids were skipped.
+    @discardableResult
+    private func signalIfUnchanged(_ pids: [pid_t], in group: AppGroupMemory) -> Int {
+        var skipped = 0
+        for pid in pids {
+            if let seen = group.pidPaths[pid], env.currentPath(pid) != seen {
+                skipped += 1
+                continue
+            }
+            _ = env.sendSignal(pid, SIGTERM)
+        }
+        return skipped
+    }
+
     /// GUI apps get a normal Quit (they can save state; helpers exit with them).
     /// Groups without a GUI app (daemons, MCP servers) get SIGTERM.
     func terminateGroup(_ group: AppGroupMemory) {
         guard !group.isProtected else { return }
         let quitCount = env.quitGUIApps(Set(group.pids))
         if quitCount == 0 {
-            group.pids.forEach { _ = env.sendSignal($0, SIGTERM) }
+            signalIfUnchanged(group.pids, in: group)
         }
         confirmingGroupId = nil
         let savedStr = String(format: "%.1fGB", group.totalMB / 1024.0)
@@ -517,18 +584,21 @@ class SystemMemoryMonitor: ObservableObject {
 
     /// Bulk reclaim only touches daemons idle for >= manualIdleSec, so a running build is never cut off.
     func reclaimIdleDaemonsNow() {
-        let targets = stats.groups.filter { $0.isReclaimableDaemon && !$0.isProtected }
-        let idlePids = targets.flatMap { $0.idlePids }
-        let busyCount = targets.reduce(0) { $0 + $1.pids.count } - idlePids.count
-        guard !idlePids.isEmpty else {
+        reclaim(stats.groups.filter { $0.isReclaimableDaemon && !$0.isProtected })
+    }
+
+    private func reclaim(_ targets: [AppGroupMemory]) {
+        let idleCount = targets.reduce(0) { $0 + $1.idlePids.count }
+        let busyCount = targets.reduce(0) { $0 + $1.pids.count } - idleCount
+        guard idleCount > 0 else {
             lastActionMessage = busyCount > 0
                 ? "⏳ 빌드 데몬 \(busyCount)개가 작업 중이라 건너뛰었습니다."
                 : "✅ 현재 점유 중인 유휴 빌드 데몬(Java/Dart)이 없습니다."
             return
         }
-        idlePids.forEach { _ = env.sendSignal($0, SIGTERM) }
+        let skipped = targets.reduce(0) { $0 + signalIfUnchanged($1.idlePids, in: $1) }
         let freedMB = targets.reduce(0) { $0 + $1.idleMB }
-        var msg = String(format: "🔥 유휴 빌드 데몬 %d개 회수 완료 (약 %.1fGB 반환)", idlePids.count, freedMB / 1024.0)
+        var msg = String(format: "🔥 유휴 빌드 데몬 %d개 회수 완료 (약 %.1fGB 반환)", idleCount - skipped, freedMB / 1024.0)
         if busyCount > 0 { msg += " · 작업 중 \(busyCount)개 유지" }
         addLog(msg)
         lastActionMessage = msg
@@ -551,14 +621,17 @@ class SystemMemoryMonitor: ObservableObject {
     }
 
     func purgePhysicalRAMCache() {
+        guard !isBusy else { return }
         lastActionMessage = "💧 macOS 물리 RAM 비활성 캐시(purge) 비우기 요청 중..."
         runCommandInBackground("/usr/bin/osascript",
                                ["-e", "do shell script \"/usr/sbin/purge\" with administrator privileges"]) { result in
             if result.status == 0 {
                 self.addLog("💧 물리 RAM 비활성 캐시(Purge) 강제 비우기 완료")
                 self.lastActionMessage = "✅ 물리 RAM 비활성 캐시 비우기 완료!"
-            } else {
+            } else if result.output.contains("-128") {   // admin prompt cancelled
                 self.lastActionMessage = "ℹ️ 캐시 비우기가 취소되었습니다."
+            } else {
+                self.lastActionMessage = "⚠️ 캐시 비우기 실패: \(result.lastLine.suffix(60))"
             }
         }
     }
@@ -569,7 +642,23 @@ class SystemMemoryMonitor: ObservableObject {
 
     /// offload.sh exits 0 on success and when the folder is already linked.
     func offloadToExternalSSD(_ target: OffloadTarget) {
-        guard !target.isOffloaded else { return }
+        guard !target.isOffloaded, !isBusy else { return }
+        isBusy = true
+        lastActionMessage = "🔎 '\(target.title)' 사용 중인 프로세스 확인 중..."
+        scanQueue.async {
+            let blockers = OffloadSafety.blockers(for: target, in: self.scanProcesses())
+            DispatchQueue.main.async {
+                self.isBusy = false
+                guard blockers.isEmpty else {
+                    self.lastActionMessage = "⚠️ 사용 중이라 이전 보류: \(blockers.prefix(3).joined(separator: ", ")) 종료 후 다시 시도"
+                    return
+                }
+                self.runOffload(target)
+            }
+        }
+    }
+
+    private func runOffload(_ target: OffloadTarget) {
         lastActionMessage = "🚀 '\(target.title)' 외장 SSD 이전 중..."
         runCommandInBackground("/bin/zsh",
                                ["/Volumes/ExternalSSD/MacOffload/offload.sh", target.sourcePath, target.offloadName]) { result in
@@ -583,6 +672,7 @@ class SystemMemoryMonitor: ObservableObject {
     }
 
     func cleanUnavailableSimulators() {
+        guard !isBusy else { return }
         lastActionMessage = "🧹 미사용 구버전 iOS 시뮬레이터 정리 중..."
         runCommandInBackground("/usr/bin/xcrun", ["simctl", "delete", "unavailable"]) { result in
             if result.status == 0 {
