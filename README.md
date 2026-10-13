@@ -62,3 +62,7 @@ Tests/MacRamPulseKitTests/
 
 - 스왑·압축 사용량은 `ri_phys_footprint - ri_resident_size`로 계산한 **추정치**입니다. 관리자 권한 없이는 다른 프로세스의 압축·스왑 페이지를 직접 읽을 수 없기 때문입니다.
 - '외장 SSD 이전' 버튼은 `/Volumes/ExternalSSD/MacOffload/offload.sh`를 호출합니다. 작성자 환경에 맞춘 경로이므로, 다른 환경에서는 경로를 바꿔 사용하세요.
+
+## 라이선스
+
+[MIT](LICENSE)
