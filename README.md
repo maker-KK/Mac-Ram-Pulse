@@ -22,12 +22,12 @@ brew install maker-KK/tap/mac-ram-pulse
 
 macOS의 '활성 상태 보기'는 앱 하나를 수십 개의 헬퍼 프로세스로 쪼개서 보여 줍니다. Mac Ram Pulse는 이 프로세스들을 **앱 단위로 합산**해, 각 앱이 실제 RAM과 SSD 스왑·압축 메모리를 얼마나 쓰는지 보여 줍니다. 또 **확실히 놀고 있는 빌드 데몬만** 골라 자동으로 회수합니다.
 
-## 메뉴바: 숫자 대신 한 단어와 움직이는 맥미니
+## 메뉴바: 숫자 대신 한 단어와 얼굴 있는 맥미니
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/menubar-states-dark.gif">
-    <img src="docs/screenshots/menubar-states-light.gif" width="620" alt="메뉴바 상태 다섯 단계: 쾌적(바람), 여유(반짝임), 보통(아지랑이), 버거움(열기와 땀방울), 위험(불나는 맥미니)">
+    <img src="docs/screenshots/menubar-states-light.gif" width="620" alt="메뉴바 상태 다섯 단계: 쾌적(눈 감고 바람 쐬는 맥미니), 여유(미소와 반짝임), 보통(무표정과 아지랑이), 버거움(걱정스러운 얼굴과 땀방울), 위험(눈이 커진 채 불타는 맥미니)">
   </picture>
 </p>
 
@@ -35,7 +35,8 @@ macOS의 '활성 상태 보기'는 앱 하나를 수십 개의 헬퍼 프로세�
 
 - 판정 기준: macOS 메모리 압박 신호, **SSD에서 메모리를 다시 읽어 오는 속도**(버벅임의 실제 원인), SSD로 밀려난 메모리 양, 남은 메모리를 함께 봅니다.
 - 나빠지면 바로 표시하고, 좋아질 때는 두 번 연속 확인한 뒤에 바꿔서 경계에서 깜빡이지 않습니다.
-- 메뉴바에 마우스를 올리면 이유가 한 문장으로 나옵니다. 예: "SSD로 밀려난 메모리가 많아요".
+- 작은 맥미니에 얼굴이 있습니다. 쾌적하면 눈을 감고 바람을 쐬고, 보통이면 무표정, 버거우면 땀을 흘리고, 위험하면 눈이 커진 채 불이 붙습니다.
+- 메뉴바에 마우스를 올리면 이유가 한 문장으로 나옵니다. 예: "SSD로 밀려난 메모리가 많아요". 팝오버를 열면 맨 위 카드에 같은 맥미니가 크게 나오고, "지금 내 맥은 — 쾌적"처럼 한 줄로 알려 줍니다.
 - 애니메이션은 Core Animation이 그리므로 앱의 CPU 사용은 0%에 가깝습니다. '동작 줄이기' 설정을 켜 두었거나 화면이 꺼져 있으면 멈춘 그림으로 바뀝니다.
 - 무인 자동관리 탭에서 표시 방식(상태 / 아이콘만 / 숫자)과 애니메이션 여부를 바꿀 수 있습니다.
 
@@ -72,6 +73,8 @@ macOS의 '활성 상태 보기'는 앱 하나를 수십 개의 헬퍼 프로세�
     </td>
   </tr>
 </table>
+
+팝오버는 macOS 26 이후의 디자인 언어(Liquid Glass)를 따릅니다. 상태 카드와 버튼은 유리 재질로 떠 있고, 모서리는 동심원으로 맞추고, 숫자는 둥근 서체를 씁니다. macOS 13–15에서는 같은 배치가 반투명 카드로 보입니다. (위 스크린샷은 오프스크린 렌더라 반투명 카드 버전입니다. 실제 macOS 26 이상에서는 유리 재질로 보입니다.)
 
 외부 셸 명령(`ps`, `top`, `vm_stat`)을 호출하지 않습니다. Darwin C API(`host_statistics64`, `sysctlbyname`, `proc_listallpids`, `proc_pid_rusage`, `proc_pidinfo`, `KERN_PROCARGS2`)만으로 동작합니다. 팝오버가 닫혀 있을 때는 메뉴바 제목만 갱신하므로 평상시 CPU 사용률은 0%에 가깝습니다.
 
@@ -117,8 +120,11 @@ Sources/MacRamPulseKit/
   ProcessScanner.swift      libproc 스캔, IdleTracker(구간별 CPU 유휴), ProcArgs(argv 파싱)
   ProcessClassifier.swift   앱 그룹·보호 규칙, Codex 중복 MCP 탐지
   SystemMemoryMonitor.swift 상태, 순찰 규칙, 사용자 동작 (MonitorEnvironment로 부수효과 주입)
+  Comfort.swift             쾌적~위험 판정(ComfortAssessor), 깜빡임 방지(ComfortTracker), 메뉴바 문구
+  MenuBarIcon.swift         얼굴 있는 맥미니 프레임을 코드로 그림
+  PulseStyle.swift          디자인 토큰, Liquid Glass(macOS 26+)와 반투명 폴백, 상태 카드
   PulsePopoverView.swift    SwiftUI 팝오버
-  AppDelegate.swift         메뉴바 아이템, MacRamPulseApp.run()
+  AppDelegate.swift         메뉴바 아이템(Core Animation 재생), MacRamPulseApp.run()
 Sources/MacRamPulse/main.swift
 Tests/MacRamPulseKitTests/
 ```

@@ -51,8 +51,7 @@ enum ComfortAssessor {
     static func assess(_ i: ComfortInputs) -> ComfortReading {
         let pressure = i.pressure >= 4 ? 70 : i.pressure >= 2 ? 35 : 0
         let swapIn = step(i.swapInMBps, [(0.5, 0), (2, 8), (8, 18), (25, 30)], above: 45)
-        let swapRatio = i.ramGB > 0 ? i.swapUsedGB / i.ramGB : 0
-        let swap = step(swapRatio, [(0.05, 0), (0.2, 5), (0.4, 12), (0.6, 20)], above: 28)
+        let swap = swapPoints(swapGB: i.swapUsedGB, ramGB: i.ramGB)
         let free = i.freePercent >= 40 ? 0 : i.freePercent >= 25 ? 6 : i.freePercent >= 15 ? 14 : 24
         let score = pressure + swapIn + swap + free
 
@@ -66,6 +65,22 @@ enum ComfortAssessor {
         let top = parts.max { $0.0 < $1.0 }!
         let reason = top.0 >= 8 ? top.1 : "메모리가 넉넉해요"
         return ComfortReading(level: level, score: score, reason: reason)
+    }
+
+    /// Swap relative to RAM: a 20GB swap means something different on 8GB and on 64GB.
+    static func swapPoints(swapGB: Double, ramGB: Double) -> Int {
+        let ratio = ramGB > 0 ? swapGB / ramGB : 0
+        return step(ratio, [(0.05, 0), (0.2, 5), (0.4, 12), (0.6, 20)], above: 28)
+    }
+
+    /// Label for the swap card, on the same scale as the state word so the two never disagree.
+    static func swapLabel(swapGB: Double, ramGB: Double) -> String {
+        switch swapPoints(swapGB: swapGB, ramGB: ramGB) {
+        case 0: return "거의 없음"
+        case 5: return "조금"
+        case 12: return "많음"
+        default: return "높음"
+        }
     }
 
     /// Points for the first band `value` falls under, else `above`.
@@ -100,6 +115,16 @@ struct ComfortTracker {
             pending = nil
         }
         return level!
+    }
+}
+
+// MARK: - Large icon in the popover
+
+/// Which frame the popover's big Mac mini shows at a given time; a still first frame under Reduce Motion.
+enum PopoverIconClock {
+    static func frame(for level: ComfortLevel, at time: TimeInterval, reduceMotion: Bool) -> Int {
+        guard !reduceMotion else { return 0 }
+        return Int(time * MenuBarIcon.fps(level)) % MenuBarIcon.frameCount(level)
     }
 }
 

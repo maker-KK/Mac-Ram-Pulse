@@ -11,7 +11,7 @@ tag="v$version"
 repo="maker-KK/Mac-Ram-Pulse"
 tap="$(brew --repository maker-KK/tap)"
 formula="$tap/Formula/mac-ram-pulse.rb"
-coauthor="Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+coauthor="Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 [[ -z "$(git status --porcelain)" ]] || { echo "working tree is not clean" >&2; exit 1; }
 plist_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Support/Info.plist)

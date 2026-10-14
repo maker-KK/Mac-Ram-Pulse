@@ -184,6 +184,7 @@ class SystemMemoryMonitor: ObservableObject {
     var onUpdateComfort: ((ComfortLevel, Bool, String) -> Void)?
     private var comfortTracker = ComfortTracker()
     private var lastSwapIn: (pages: UInt64, at: TimeInterval)?
+    private var lastSwapInRate = 0.0
     private var lastStatusStats: MemoryStats?
     private let env: MonitorEnvironment
     private var defaults: UserDefaults { env.defaults }
@@ -340,13 +341,22 @@ class SystemMemoryMonitor: ObservableObject {
     }
 
     /// Main thread: judge comfort from fresh VM numbers and push it to the menu bar.
+    /// Two readings closer than this (quick timer + popover refresh back to back) would turn a
+    /// handful of pages into a huge MB/s; keep the previous rate and let the window grow instead.
+    static let minRateWindow: TimeInterval = 1
+
     func publishStatus(_ s: MemoryStats, now: TimeInterval = Date().timeIntervalSince1970) {
-        var rate = 0.0
+        var rate = lastSwapInRate
         if let last = lastSwapIn {
-            rate = ComfortAssessor.swapInRate(previousPages: last.pages, pages: s.swapInPages,
-                                              pageSize: s.pageSize, seconds: now - last.at)
+            if now - last.at >= Self.minRateWindow || now < last.at {
+                rate = ComfortAssessor.swapInRate(previousPages: last.pages, pages: s.swapInPages,
+                                                  pageSize: s.pageSize, seconds: now - last.at)
+                lastSwapIn = (s.swapInPages, now)
+            }
+        } else {
+            lastSwapIn = (s.swapInPages, now)
         }
-        lastSwapIn = (s.swapInPages, now)
+        lastSwapInRate = rate
         let reading = ComfortAssessor.assess(ComfortInputs(
             pressure: s.vmPressureLevel, freePercent: s.kernelFreeLevel,
             swapUsedGB: s.swapUsedMB / 1024, ramGB: s.totalGB, swapInMBps: rate

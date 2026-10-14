@@ -19,6 +19,8 @@ struct ScreenshotTests {
     @Test("render popover tabs in light and dark appearance")
     func renderAll() throws {
         _ = NSApplication.shared
+        PulseStyle.glassEnabled = false            // glass does not survive an offscreen render
+        defer { PulseStyle.glassEnabled = true }
         try FileManager.default.createDirectory(at: Self.outDir, withIntermediateDirectories: true)
         let spy = Spy()
         let monitor = spy.makeMonitor()
@@ -75,11 +77,43 @@ struct ScreenshotTests {
     func renderMenuBarGIFs() throws {
         _ = NSApplication.shared
         try FileManager.default.createDirectory(at: Self.outDir, withIntermediateDirectories: true)
+        try Self.writeIconSheet()
         for dark in [true, false] {
             let url = Self.outDir.appendingPathComponent("menubar-states-\(dark ? "dark" : "light").gif")
             try Self.writeMenuBarGIF(dark: dark, to: url)
             #expect(FileManager.default.fileExists(atPath: url.path))
         }
+    }
+
+    /// Every frame of every level at 6x, for eyeballing after icon changes ($TMPDIR/mrp-review/icon-sheet.png).
+    static func writeIconSheet() throws {
+        let scale: CGFloat = 6, pad: CGFloat = 6
+        let cell = CGSize(width: MenuBarIcon.size.width * scale + pad, height: MenuBarIcon.size.height * scale + pad)
+        let columns = ComfortLevel.allCases.map(MenuBarIcon.frameCount).max()!
+        let size = CGSize(width: cell.width * CGFloat(columns) + pad, height: cell.height * 2 * CGFloat(ComfortLevel.allCases.count) + pad)
+        let rep = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width), pixelsHigh: Int(size.height),
+                                                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        for (n, level) in ComfortLevel.allCases.enumerated() {
+            for dark in [true, false] {
+                let row = CGFloat(n * 2 + (dark ? 0 : 1))
+                let y = size.height - cell.height * (row + 1) - pad
+                (dark ? NSColor(white: 0.13, alpha: 1) : NSColor(white: 0.94, alpha: 1)).setFill()
+                NSRect(x: 0, y: y, width: size.width, height: cell.height).fill()
+                let count = MenuBarIcon.frameCount(level)
+                for f in 0..<count {
+                    MenuBarIcon.image(level, frame: f, of: count)
+                        .draw(in: NSRect(x: pad + CGFloat(f) * cell.width, y: y + pad / 2,
+                                         width: MenuBarIcon.size.width * scale, height: MenuBarIcon.size.height * scale))
+                }
+            }
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mrp-review")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try #require(rep.representation(using: .png, properties: [:])).write(to: dir.appendingPathComponent("icon-sheet.png"))
     }
 
     /// Five menu bar cells side by side; each level plays at its own frame rate.
@@ -185,6 +219,7 @@ struct ScreenshotTests {
                           estimatedSize: size, isOffloaded: done, exists: true)
         }
         m.stats = s
+        m.publishStatus(s, now: 0)               // the hero card shows a real word, not "측정 중"
         m.totalSavedMB = 12.4 * 1024
         m.totalCleanCount = 37
         m.autoLogs = [
