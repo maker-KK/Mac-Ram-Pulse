@@ -56,6 +56,12 @@ struct ScreenshotTests {
         }
         try? render(monitor, dark: true, to: dir.appendingPathComponent("hidden-rows.png"))
         monitor.stats = base
+        monitor.stats.codexAdvice = CodexAdvice(mainPid: 100, uptimeHours: 58, engineMB: 10_900, treeMB: 31_300, childCount: 160)
+        try? render(monitor, dark: true, to: dir.appendingPathComponent("chatgpt-advice.png"))
+        monitor.confirmingRestart = true
+        try? render(monitor, dark: false, to: dir.appendingPathComponent("chatgpt-advice-armed.png"))
+        monitor.confirmingRestart = false
+        monitor.stats = base
         monitor.mainTab = .ssdBoost
         monitor.stats.externalMounted = false
         monitor.stats.externalFreeGB = 0

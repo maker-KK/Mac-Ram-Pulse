@@ -2,7 +2,7 @@ import Cocoa
 import SwiftUI
 import Darwin
 
-// MARK: - Modern SwiftUI Popover Interface (v5.4)
+// MARK: - Modern SwiftUI Popover Interface (v5.5)
 
 struct PulsePopoverView: View {
     @ObservedObject var monitor: SystemMemoryMonitor
@@ -44,7 +44,7 @@ struct PulsePopoverView: View {
                     HStack(spacing: 6) {
                         Text("MacRamPulse")
                             .font(.system(size: 15, weight: .bold))
-                        Text("v5.4")
+                        Text("v5.5")
                             .font(.system(size: 9, weight: .bold))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
@@ -227,6 +227,10 @@ struct PulsePopoverView: View {
 
     var appsTabView: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let advice = monitor.stats.codexAdvice {
+                chatGPTAdviceCard(advice)
+            }
+
             // Search & Sort Controls
             HStack(spacing: 8) {
                 HStack(spacing: 4) {
@@ -618,6 +622,42 @@ struct PulsePopoverView: View {
             }
             .frame(height: 225)
         }
+    }
+
+    /// Plain-language card: what is wrong, what a restart gives back, one button.
+    func chatGPTAdviceCard(_ advice: CodexAdvice) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Text("🤖").font(.system(size: 22))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(String(format: "ChatGPT가 메모리를 %.0fGB 쓰고 있어요", advice.treeMB / 1024))
+                    .font(.system(size: 12, weight: .bold))
+                Text(String(format: "%@ 켜져 있어서 쌓였어요. 다시 시작하면 대부분 돌아와요 (대화는 그대로).",
+                            Self.uptimeText(advice.uptimeHours)))
+                    .font(.system(size: 10.5))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 4)
+            if monitor.confirmingRestart {
+                Button("확인") { monitor.confirmChatGPTRestart() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .controlSize(.small)
+                    .help("ChatGPT를 정상 종료한 뒤 다시 엽니다. 진행 중인 Codex 작업은 멈춰요.")
+            } else {
+                Button("다시 시작") { monitor.requestChatGPTRestart() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(monitor.isBusy)
+            }
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.12))
+        .cornerRadius(10)
+    }
+
+    static func uptimeText(_ hours: Double) -> String {
+        hours >= 48 ? String(format: "%.0f일 넘게", floor(hours / 24)) : String(format: "%.0f시간째", hours)
     }
 
     /// Switches to GB at 1023.5MB so a value never renders as "1024M".

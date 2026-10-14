@@ -27,6 +27,8 @@ final class Spy {
     var toastDuration: TimeInterval = 6
     var startsAutomatically = false
     var volumeMounted = true
+    var restartResult = true
+    var restartCalls: [pid_t] = []
     let scans = Counter()
     /// pid -> current executable path; pids not listed report the path recorded at scan time.
     var currentPaths: [pid_t: String] = [:]
@@ -43,6 +45,7 @@ final class Spy {
         env.toastDuration = toastDuration
         let mounted = volumeMounted
         env.isVolumeMounted = { _ in mounted }
+        env.restartApp = { pid in self.restartCalls.append(pid); return self.restartResult }
         env.sendSignal = { pid, sig in self.signals.append((pid, sig)); return 0 }
         env.quitGUIApps = { pids in self.quitRequests.append(pids); return self.guiAppCount }
         env.runCommand = { path, args in self.commands.append((path, args)); return self.commandResult }

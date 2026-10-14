@@ -11,8 +11,8 @@ struct ProcSample {
     let path: String
     let parentPath: String
     let grandparentPath: String
-    let args: String         // `node` processes only (to tell OpenClaw from MCP servers)
-    let cwd: String          // `node` processes only (same argv can be different servers)
+    let args: String         // node and Codex-started processes (OpenClaw / duplicate detection)
+    let cwd: String          // same scope as args (same argv can be different servers)
     let rssMB: Double
     let footprintMB: Double
     let ageSec: Int64
@@ -138,8 +138,12 @@ final class ProcessScanner {
             let parentPath = ppid > 1 ? Self.path(of: ppid, memo: &pathMemo) : ""
             var meta = NodeMeta(args: "", cwd: "")
             var grandparentPath = ""
-            if Self.isNode(path) {
+            // argv/cwd for node and for everything the Codex engine starts (duplicate detection);
+            // the grandparent for anything behind a launcher (npm exec, uv, node_repl).
+            if Self.isNode(path) || ProcessClassifier.codexHost(of: parentPath) != nil {
                 meta = cachedNodeMeta(pid: pid, key: key)
+            }
+            if Self.isNode(path) || ProcessClassifier.isRelay(parentPath) {
                 let gppid = ppid > 1 ? Self.parent(of: ppid, memo: &ppidMemo) : 0
                 grandparentPath = gppid > 1 ? Self.path(of: gppid, memo: &pathMemo) : ""
             }

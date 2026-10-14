@@ -22,6 +22,10 @@ enum Paths {
     static let asideRenderer = "/Applications/Aside.app/Contents/Frameworks/Aside Framework.framework/Versions/1.0.928.1/Helpers/Aside Helper (Renderer).app/Contents/MacOS/Aside Helper (Renderer)"
     static let antigravity = "/Applications/Antigravity.app/Contents/MacOS/Electron"
     static let launchd = "/sbin/launchd"
+    static let uv = "/opt/homebrew/bin/uv"
+    static let uvPython = "/Users/me/.cache/uv/archive-v0/SXTaIWcl7HBGvlRS/bin/python"
+    static let computerUse = "/Users/me/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
+    static let antigravityLS = "/Applications/Antigravity.app/Contents/Resources/bin/language_server"
 }
 
 func sample(

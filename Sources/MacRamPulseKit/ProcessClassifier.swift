@@ -66,33 +66,48 @@ enum ProcessClassifier {
         return lowerPath.contains("virtualization.virtualmachine") || exe == "colima" || exe == "limactl"
     }
 
+    /// The Codex engine is the `codex` executable itself (not "Codex (Renderer)", not the
+    /// ".../Codex Computer Use.app/..." client, whose paths merely contain "codex").
     static func codexHost(of path: String) -> CodexHost? {
+        let exe = (path as NSString).lastPathComponent.lowercased()
+        guard exe.hasPrefix("codex"), !exe.contains(" ") else { return nil }
         let lower = path.lowercased()
-        if lower.contains("/.local/bin/codex") || lower.contains("/.codex/packages/") { return .standalone }
-        if lower.contains("/codex") { return .chatGPTApp }
-        return nil
+        if lower.contains("/.local/bin/") || lower.contains("/.codex/packages/") { return .standalone }
+        return .chatGPTApp
     }
 
-    private static func isRelay(_ path: String) -> Bool {
-        ProcessScanner.isNode(path) || path.lowercased().hasSuffix("/node_repl")
+    private static func exe(_ path: String) -> String { (path as NSString).lastPathComponent.lowercased() }
+
+    /// Launchers that run the real tool as their child (`npm exec`, `uv tool uvx`, node_repl kernels).
+    static func isRelay(_ path: String) -> Bool {
+        ProcessScanner.isNode(path) || ["node_repl", "uv", "uvx"].contains(exe(path))
     }
 
-    /// Codex spawns a full set of MCP servers (and CUA node_repl kernels) per chat thread and keeps
-    /// them alive. Matches direct children and grandchildren behind `npm exec` / `node_repl`.
+    /// Tool processes Codex starts once per chat thread and never stops.
+    static func isPerThreadTool(_ path: String) -> Bool {
+        isRelay(path) || exe(path) == "skycomputeruseclient"
+    }
+
+    /// What may run under a per-thread tool and is reclaimed together with it.
+    private static func isToolDescendant(_ path: String) -> Bool {
+        isRelay(path) || exe(path).hasPrefix("python")
+    }
+
+    /// Everything the Codex engine starts belongs to it, as do grandchildren behind a relay.
     static func codexAncestor(of s: ProcSample) -> CodexHost? {
-        guard isRelay(s.path) else { return nil }
         if let host = codexHost(of: s.parentPath) { return host }
         if isRelay(s.parentPath), let host = codexHost(of: s.grandparentPath) { return host }
         return nil
     }
 
-    /// Duplicate ChatGPT-Codex MCP servers (same parent + cwd + argv), keeping the newest of each set.
-    /// A server only counts as idle if its whole `node` subtree is idle; the subtree is returned with it.
-    /// Servers of the standalone (protected) Codex CLI and servers with an unknown cwd are never touched.
+    /// Duplicate per-thread tools of ChatGPT's Codex engine (node / uv MCP servers, node_repl,
+    /// Computer Use clients) with the same parent + cwd + argv, keeping the newest of each set.
+    /// A tool only counts as idle if its whole subtree is idle; the subtree is returned with it.
+    /// Tools of the standalone (protected) Codex CLI and tools with an unknown cwd are never touched.
     static func idleCodexDuplicates(_ samples: [ProcSample], minIdleSec: Double) -> [ProcSample] {
-        let nodeChildren = Dictionary(grouping: samples.filter { ProcessScanner.isNode($0.path) }) { $0.ppid }
+        let nodeChildren = Dictionary(grouping: samples.filter { isToolDescendant($0.path) }) { $0.ppid }
         let servers = samples.filter {
-            ProcessScanner.isNode($0.path) && !$0.cwd.isEmpty && codexHost(of: $0.parentPath) == .chatGPTApp
+            isPerThreadTool($0.path) && !$0.cwd.isEmpty && codexHost(of: $0.parentPath) == .chatGPTApp
         }
         let roots = Dictionary(grouping: servers) { "\($0.ppid)|\($0.cwd)|\($0.args)" }.values.flatMap { set -> [ProcSample] in
             guard set.count > 1, let newest = set.min(by: { $0.ageSec < $1.ageSec }) else { return [] }

@@ -75,4 +75,5 @@ struct MemoryStats {
     var groups: [AppGroupMemory] = []
     var reclaimableSwapMB: Double = 0.0
     var offloadTargets: [OffloadTarget] = []
+    var codexAdvice: CodexAdvice? = nil
 }

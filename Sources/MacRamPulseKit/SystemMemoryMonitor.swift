@@ -34,6 +34,21 @@ struct MonitorEnvironment {
         }
         return mountedOn == path
     }
+    /// Quits the app with this pid normally and opens it again; false if it refused to quit.
+    var restartApp: (pid_t) -> Bool = MonitorEnvironment.relaunchApp
+
+    /// Normal Quit (the app may save state or ask the user), wait up to 30s, then open it again.
+    static func relaunchApp(_ pid: pid_t) -> Bool {
+        guard let app = NSRunningApplication(processIdentifier: pid), let url = app.bundleURL,
+              app.terminate() else { return false }
+        let deadline = Date().addingTimeInterval(30)
+        while kill(pid, 0) == 0 && Date() < deadline { Thread.sleep(forTimeInterval: 0.25) }
+        guard kill(pid, 0) != 0 else { return false }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = false
+        NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
+        return true
+    }
     /// Current executable path of a pid ("" if gone).
     var currentPath: (pid_t) -> String = MonitorEnvironment.executablePath
 
@@ -106,6 +121,9 @@ class SystemMemoryMonitor: ObservableObject {
             if let armed = confirmingGroupId, !stats.groups.contains(where: { $0.id == armed }) {
                 disarmConfirmation()
             }
+            if confirmingRestart && stats.codexAdvice == nil {
+                disarmRestart()
+            }
         }
     }
     @Published var mainTab: MainTab = .apps
@@ -117,6 +135,7 @@ class SystemMemoryMonitor: ObservableObject {
     @Published var isBusy: Bool = false
     @Published var isPopoverVisible: Bool = false
     @Published var confirmingGroupId: String? = nil
+    @Published var confirmingRestart = false
 
     // Autopilot Settings (Persisted)
     @Published var autoGuardEnabled: Bool = true {
@@ -143,6 +162,9 @@ class SystemMemoryMonitor: ObservableObject {
     private var patrolTimer: Timer?
     private var toastDismissWork: DispatchWorkItem?
     private var confirmWork: DispatchWorkItem?
+    private var restartWork: DispatchWorkItem?
+    /// ChatGPT run (main pid) the patrol already logged a restart advice for.
+    private var advisedChatGPTPid: pid_t?
     var onUpdateStatusTitle: ((String) -> Void)?
     private let env: MonitorEnvironment
     private var defaults: UserDefaults { env.defaults }
@@ -327,8 +349,10 @@ class SystemMemoryMonitor: ObservableObject {
         Self.readVM(into: &s)
         Self.readDisks(into: &s, externalPath: env.externalVolumePath)
         s.offloadTargets = Self.readOffloadTargets()
-        let grouped = Self.buildGroups(scanProcesses())
+        let samples = scanProcesses()
+        let grouped = Self.buildGroups(samples)
         s.groups = grouped.groups
+        s.codexAdvice = CodexHealth.assess(samples)
         s.reclaimableSwapMB = grouped.reclaimableMB
         s.scanDurationMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000.0
         return s
@@ -535,11 +559,14 @@ class SystemMemoryMonitor: ObservableObject {
         let wantsFullRefresh = isPopoverVisible || manualTrigger
 
         scanQueue.async {
-            let victims = Self.patrolVictims(self.scanProcesses(), cfg)
+            let samples = self.scanProcesses()
+            let victims = Self.patrolVictims(samples, cfg)
+            let advice = CodexHealth.assess(samples)
             victims.forEach { _ = self.env.sendSignal($0.sample.pid, SIGTERM) }
             let freedMB = victims.reduce(0) { $0 + $1.sample.footprintMB }
 
             DispatchQueue.main.async {
+                self.logAdviceOnce(advice)
                 if !victims.isEmpty {
                     let unique = Array(Set(victims.map { $0.label })).sorted().joined(separator: ", ")
                     let msg = String(format: "🧹 자동 회수: %@ (%d개 · 약 %.0fMB 반환)", unique, victims.count, freedMB)
@@ -563,6 +590,51 @@ class SystemMemoryMonitor: ObservableObject {
     }
 
     // MARK: - User Actions
+
+    private func logAdviceOnce(_ advice: CodexAdvice?) {
+        guard let a = advice, a.mainPid != advisedChatGPTPid else { return }
+        advisedChatGPTPid = a.mainPid
+        addLog(String(format: "⚠️ ChatGPT %.0f시간째 실행 · Codex 엔진 %.1fGB — 재시작 권장 (최대 약 %.0fGB 정리)",
+                      a.uptimeHours, a.engineMB / 1024, a.treeMB / 1024))
+    }
+
+    /// "재시작" on the ChatGPT advice card: first tap arms, "확인" restarts.
+    func requestChatGPTRestart() {
+        guard stats.codexAdvice != nil, !isBusy else { return }
+        restartWork?.cancel()
+        confirmingRestart = true
+        let work = DispatchWorkItem { [weak self] in self?.confirmingRestart = false }
+        restartWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + env.confirmTimeout, execute: work)
+    }
+
+    func confirmChatGPTRestart() {
+        guard confirmingRestart, let advice = stats.codexAdvice, !isBusy else { return }
+        disarmRestart()
+        isBusy = true
+        lastActionMessage = "🔄 ChatGPT를 다시 시작하는 중… (대화는 유지돼요)"
+        DispatchQueue.global(qos: .userInitiated).async {
+            let ok = self.env.restartApp(advice.mainPid)
+            DispatchQueue.main.async {
+                self.isBusy = false
+                if ok {
+                    let msg = String(format: "ChatGPT 재시작 완료 (최대 약 %.0fGB 정리)", advice.treeMB / 1024)
+                    self.addLog("🔄 " + msg)
+                    self.lastActionMessage = "✅ " + msg
+                    self.stats.codexAdvice = nil
+                } else {
+                    self.lastActionMessage = "⚠️ ChatGPT가 종료되지 않았어요. 저장 안 된 작업이나 확인 창이 있는지 봐 주세요."
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.refreshFull() }
+            }
+        }
+    }
+
+    private func disarmRestart() {
+        restartWork?.cancel()
+        restartWork = nil
+        confirmingRestart = false
+    }
 
     /// Row button "정리"/"회수". Daemon rows reclaim only their idle processes; app rows are armed
     /// for `confirmTimeout` and need a second tap on "종료확인".
