@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import SwiftUI
 import Testing
 @testable import MacRamPulseKit
@@ -68,6 +69,54 @@ struct ScreenshotTests {
         monitor.stats.externalUsedPct = 0
         try? render(monitor, dark: true, to: dir.appendingPathComponent("ssd-unplugged.png"))
         monitor.stats = base
+    }
+
+    @Test("menu bar animation for every comfort level, as GIFs")
+    func renderMenuBarGIFs() throws {
+        _ = NSApplication.shared
+        try FileManager.default.createDirectory(at: Self.outDir, withIntermediateDirectories: true)
+        for dark in [true, false] {
+            let url = Self.outDir.appendingPathComponent("menubar-states-\(dark ? "dark" : "light").gif")
+            try Self.writeMenuBarGIF(dark: dark, to: url)
+            #expect(FileManager.default.fileExists(atPath: url.path))
+        }
+    }
+
+    /// Five menu bar cells side by side; each level plays at its own frame rate.
+    static func writeMenuBarGIF(dark: Bool, to url: URL) throws {
+        let cell = CGSize(width: 150, height: 56), scale: CGFloat = 2.4, gifFPS = 20.0, seconds = 3.0
+        let size = CGSize(width: cell.width * CGFloat(ComfortLevel.allCases.count), height: cell.height)
+        let count = Int(gifFPS * seconds)
+        let dest = try #require(CGImageDestinationCreateWithURL(url as CFURL, "com.compuserve.gif" as CFString, count, nil))
+        CGImageDestinationSetProperties(dest, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
+        let frameProps = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 1 / gifFPS]] as CFDictionary
+        for i in 0..<count {
+            let time = Double(i) / gifFPS
+            let rep = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width), pixelsHigh: Int(size.height),
+                                                    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                    colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            (dark ? NSColor(white: 0.13, alpha: 1) : NSColor(white: 0.94, alpha: 1)).setFill()
+            NSRect(origin: .zero, size: size).fill()
+            for (n, level) in ComfortLevel.allCases.enumerated() {
+                let frames = MenuBarIcon.frameCount(level)
+                let frame = Int(time * MenuBarIcon.fps(level)) % frames
+                let x = CGFloat(n) * cell.width + 12
+                let iconSize = NSSize(width: MenuBarIcon.size.width * scale, height: MenuBarIcon.size.height * scale)
+                MenuBarIcon.image(level, frame: frame, of: frames)
+                    .draw(in: NSRect(x: x, y: (cell.height - iconSize.height) / 2, width: iconSize.width, height: iconSize.height))
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 22, weight: .semibold),
+                    .foregroundColor: dark ? NSColor.white : NSColor.black,
+                ]
+                NSAttributedString(string: level.word, attributes: attrs)
+                    .draw(at: NSPoint(x: x + iconSize.width + 8, y: (cell.height - 28) / 2))
+            }
+            NSGraphicsContext.restoreGraphicsState()
+            CGImageDestinationAddImage(dest, try #require(rep.cgImage), frameProps)
+        }
+        #expect(CGImageDestinationFinalize(dest))
     }
 
     static func render(_ monitor: SystemMemoryMonitor, dark: Bool, to url: URL) throws {

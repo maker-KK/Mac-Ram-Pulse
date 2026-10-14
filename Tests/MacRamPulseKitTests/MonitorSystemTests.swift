@@ -57,7 +57,7 @@ struct MonitorSystemTests {
         #expect(!m.stats.groups.isEmpty)
         #expect(m.stats.scanDurationMs > 0)
         #expect(m.stats.offloadTargets.count == 5)
-        #expect(titles.last?.contains("Swp") == true)
+        #expect(ComfortLevel.allCases.map(\.word).contains(titles.last ?? ""))   // default: the one-word state
     }
 
     @Test("quick refresh publishes a title on the main thread")

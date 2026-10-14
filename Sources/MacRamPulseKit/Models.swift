@@ -62,6 +62,9 @@ struct MemoryStats {
 
     var swapUsedMB: Double = 0.0
     var swapTotalMB: Double = 0.0
+    /// Cumulative pages read back from swap (vm_statistics64.swapins) and the page size.
+    var swapInPages: UInt64 = 0
+    var pageSize: UInt64 = 16_384
 
     var internalFreeGB: Double = 0.0
     var internalTotalGB: Double = 460.0

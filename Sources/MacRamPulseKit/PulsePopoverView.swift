@@ -2,24 +2,19 @@ import Cocoa
 import SwiftUI
 import Darwin
 
-// MARK: - Modern SwiftUI Popover Interface (v5.5)
+// MARK: - Modern SwiftUI Popover Interface (v5.6)
 
 struct PulsePopoverView: View {
     @ObservedObject var monitor: SystemMemoryMonitor
 
-    var pressureBadgeText: String {
-        switch monitor.stats.vmPressureLevel {
-        case 4: return "🔴 압박 위험"
-        case 2: return "🟡 스왑 활성"
-        default: return "🟢 압박 없음 (\(monitor.stats.kernelFreeLevel)% 여유)"
-        }
-    }
+    var comfortBadgeText: String { "\(monitor.comfort.level.emoji) \(monitor.comfort.level.word)" }
 
-    var pressureBadgeColor: Color {
-        switch monitor.stats.vmPressureLevel {
-        case 4: return .red
-        case 2: return .orange
-        default: return .green
+    static func comfortColor(_ level: ComfortLevel) -> Color {
+        switch level {
+        case .breezy, .easy: return .green
+        case .okay: return .yellow
+        case .strained: return .orange
+        case .onFire: return .red
         }
     }
 
@@ -44,24 +39,26 @@ struct PulsePopoverView: View {
                     HStack(spacing: 6) {
                         Text("MacRamPulse")
                             .font(.system(size: 15, weight: .bold))
-                        Text("v5.5")
+                        Text("v5.6")
                             .font(.system(size: 9, weight: .bold))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(Color.blue.opacity(0.2))
                             .foregroundColor(.blue)
                             .cornerRadius(4)
-                        Text(pressureBadgeText)
+                        Text(comfortBadgeText)
                             .font(.system(size: 9.5, weight: .bold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 1.5)
-                            .background(pressureBadgeColor.opacity(0.18))
-                            .foregroundColor(pressureBadgeColor)
+                            .background(Self.comfortColor(monitor.comfort.level).opacity(0.18))
+                            .foregroundColor(Self.comfortColor(monitor.comfort.level))
                             .cornerRadius(4)
                     }
-                    Text(String(format: "%@ · 커널 직접 스캔 %.1fms", SystemMemoryMonitor.machineLabel, monitor.stats.scanDurationMs))
+                    Text("\(monitor.comfort.reason) · \(SystemMemoryMonitor.machineLabel)")
                         .font(.system(size: 10.5))
                         .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .help(String(format: "커널 직접 스캔 %.1fms", monitor.stats.scanDurationMs))
                 }
 
                 Spacer()
@@ -464,6 +461,25 @@ struct PulsePopoverView: View {
                 .toggleStyle(.checkbox)
                 .controlSize(.small)
                 .help("Codex는 채팅 스레드마다 MCP 서버를 새로 띄우고 종료하지 않습니다. 오래된 스레드를 다시 열면 해당 MCP 도구가 재시작될 때까지 실패할 수 있습니다.")
+
+                Divider()
+
+                HStack(spacing: 8) {
+                    Text("메뉴바 표시")
+                        .font(.system(size: 11, weight: .semibold))
+                    Picker("", selection: $monitor.menuBarMode) {
+                        ForEach(MenuBarMode.allCases, id: \.self) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 170)
+                    .controlSize(.small)
+                    Toggle("움직이는 아이콘", isOn: $monitor.menuBarAnimation)
+                        .toggleStyle(.checkbox)
+                        .controlSize(.small)
+                        .font(.system(size: 11))
+                }
 
                 Text("ℹ️ OpenClaw, Colima VM, Claude, Codex CLI 세션은 보호되며, 작업 중(CPU 사용)인 프로세스는 회수하지 않습니다.")
                     .font(.system(size: 10))

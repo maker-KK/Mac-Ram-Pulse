@@ -147,6 +147,20 @@ class SystemMemoryMonitor: ObservableObject {
     @Published var trimBloatedRenderers: Bool = false {
         didSet { defaults.set(trimBloatedRenderers, forKey: "MRP_TrimRenderers") }
     }
+    /// One-word state shown in the menu bar.
+    @Published private(set) var comfort = ComfortReading(level: .okay, score: 0, reason: "측정 중")
+    @Published var menuBarMode: MenuBarMode = .status {
+        didSet {
+            defaults.set(menuBarMode.rawValue, forKey: "MRP_MenuBarMode")
+            republishStatus()
+        }
+    }
+    @Published var menuBarAnimation: Bool = true {
+        didSet {
+            defaults.set(menuBarAnimation, forKey: "MRP_MenuBarAnimation")
+            republishStatus()
+        }
+    }
     @Published var cleanCodexDuplicateMCPs: Bool = false {
         didSet { defaults.set(cleanCodexDuplicateMCPs, forKey: "MRP_CleanCodexDupes") }
     }
@@ -166,6 +180,11 @@ class SystemMemoryMonitor: ObservableObject {
     /// ChatGPT run (main pid) the patrol already logged a restart advice for.
     private var advisedChatGPTPid: pid_t?
     var onUpdateStatusTitle: ((String) -> Void)?
+    /// Menu bar icon/animation: level, whether to animate, tooltip.
+    var onUpdateComfort: ((ComfortLevel, Bool, String) -> Void)?
+    private var comfortTracker = ComfortTracker()
+    private var lastSwapIn: (pages: UInt64, at: TimeInterval)?
+    private var lastStatusStats: MemoryStats?
     private let env: MonitorEnvironment
     private var defaults: UserDefaults { env.defaults }
 
@@ -193,6 +212,12 @@ class SystemMemoryMonitor: ObservableObject {
             self.trimBloatedRenderers = ud.bool(forKey: "MRP_TrimRenderers")
         }
         self.cleanCodexDuplicateMCPs = ud.bool(forKey: "MRP_CleanCodexDupes")
+        if let raw = ud.string(forKey: "MRP_MenuBarMode"), let mode = MenuBarMode(rawValue: raw) {
+            self.menuBarMode = mode
+        }
+        if ud.object(forKey: "MRP_MenuBarAnimation") != nil {
+            self.menuBarAnimation = ud.bool(forKey: "MRP_MenuBarAnimation")
+        }
 
         self.autoLogs = ud.stringArray(forKey: "MacRamPulse_AutoLogs") ?? []
         self.totalSavedMB = ud.double(forKey: "MacRamPulse_TotalSavedMB")
@@ -314,8 +339,28 @@ class SystemMemoryMonitor: ObservableObject {
         return String(format: "%@ %d%% · Swp %.1fG", dot, usedPct, swapGB)
     }
 
-    private func publishTitle(_ title: String) {
-        DispatchQueue.main.async { self.onUpdateStatusTitle?(title) }
+    /// Main thread: judge comfort from fresh VM numbers and push it to the menu bar.
+    func publishStatus(_ s: MemoryStats, now: TimeInterval = Date().timeIntervalSince1970) {
+        var rate = 0.0
+        if let last = lastSwapIn {
+            rate = ComfortAssessor.swapInRate(previousPages: last.pages, pages: s.swapInPages,
+                                              pageSize: s.pageSize, seconds: now - last.at)
+        }
+        lastSwapIn = (s.swapInPages, now)
+        let reading = ComfortAssessor.assess(ComfortInputs(
+            pressure: s.vmPressureLevel, freePercent: s.kernelFreeLevel,
+            swapUsedGB: s.swapUsedMB / 1024, ramGB: s.totalGB, swapInMBps: rate
+        ))
+        comfort = ComfortReading(level: comfortTracker.update(reading.level), score: reading.score, reason: reading.reason)
+        lastStatusStats = s
+        republishStatus()
+    }
+
+    private func republishStatus() {
+        guard let s = lastStatusStats else { return }
+        let swapGB = s.swapUsedMB / 1024
+        onUpdateStatusTitle?(MenuBarText.text(comfort, mode: menuBarMode, usedPct: s.usedPercent, swapGB: swapGB))
+        onUpdateComfort?(comfort.level, menuBarAnimation, MenuBarText.tooltip(comfort, usedPct: s.usedPercent, swapGB: swapGB))
     }
 
     // MARK: - Zero-Subprocess Mach Kernel Quick Update (0.02 ms)
@@ -323,7 +368,7 @@ class SystemMemoryMonitor: ObservableObject {
     func refreshQuickStatusBarOnly() {
         var s = MemoryStats()
         Self.readVM(into: &s)
-        publishTitle(Self.statusTitle(usedPct: s.usedPercent, swapGB: s.swapUsedMB / 1024.0, pressure: s.vmPressureLevel))
+        DispatchQueue.main.async { self.publishStatus(s) }
     }
 
     // MARK: - Full Native Scan (libproc)
@@ -333,11 +378,7 @@ class SystemMemoryMonitor: ObservableObject {
             let newStats = self.collectNativeStats()
             DispatchQueue.main.async {
                 self.stats = newStats
-                self.onUpdateStatusTitle?(Self.statusTitle(
-                    usedPct: newStats.usedPercent,
-                    swapGB: newStats.swapUsedMB / 1024.0,
-                    pressure: newStats.vmPressureLevel
-                ))
+                self.publishStatus(newStats)
             }
         }
     }
@@ -377,6 +418,8 @@ class SystemMemoryMonitor: ObservableObject {
             s.usedGB = s.activeGB + s.wiredGB + s.compressedGB
             s.freeGB = max(0, s.totalGB - s.usedGB)
             s.usedPercent = Int(min(100, max(0, (s.usedGB / max(1, s.totalGB)) * 100.0)))
+            s.swapInPages = UInt64(vmStat.swapins)
+            s.pageSize = UInt64(vm_kernel_page_size)
         }
 
         var memLevel: Int32 = 50

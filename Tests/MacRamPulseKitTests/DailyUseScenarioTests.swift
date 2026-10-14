@@ -469,9 +469,15 @@ struct DailyUseScenarioTests {
             sample(pid: pid_t(i + 10), path: "/Applications/App\(i % 60).app/Contents/MacOS/App\(i % 60)",
                    rssMB: 40, footprintMB: 60, idleSec: Double(i % 3) * 100)
         }
-        let start = Date()
-        let result = SystemMemoryMonitor.buildGroups(samples)
-        #expect(Date().timeIntervalSince(start) < 0.05)
+        // Best of 5 so a busy machine (e.g. a CI job running alongside) doesn't make it flaky.
+        var best = Double.infinity
+        var result = SystemMemoryMonitor.buildGroups([])
+        for _ in 0..<5 {
+            let start = Date()
+            result = SystemMemoryMonitor.buildGroups(samples)
+            best = min(best, Date().timeIntervalSince(start))
+        }
+        #expect(best < 0.05)
         #expect(result.groups.count == 60)
     }
 
